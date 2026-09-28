@@ -1,15 +1,22 @@
 // Bad Apple for ESP32 with OLED SSD1306 | 2018 by Hackerspace-FFM.de | MIT-License.
+// Ported to Adafruit_SSD1306 + LittleFS.
 #include "FS.h"
-#include "SPIFFS.h"
-#include "SSD1306.h"
+#include "LittleFS.h"
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 #include "heatshrink_decoder.h"
 
-// Hints: 
-// * Adjust the display pins below
-// * After uploading to ESP32, also do "ESP32 Sketch Data Upload" from Arduino
+// Hints:
+// * Adjust the display pins / I2C address below
+// * After uploading to ESP32, also upload the data folder (containing video.hs)
+//   to LittleFS using your LittleFS data upload tool
 
-SSD1306 display (0x3c, 4, 15); // For Heltec
-//SSD1306 display (0x3c, 5, 4);
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 #if HEATSHRINK_DYNAMIC_ALLOC
 #error HEATSHRINK_DYNAMIC_ALLOC must be false for static allocation test suite.
@@ -17,7 +24,7 @@ SSD1306 display (0x3c, 4, 15); // For Heltec
 
 static heatshrink_decoder hsd;
 
-// global storage for putPixels 
+// global storage for putPixels
 int16_t curr_x = 0;
 int16_t curr_y = 0;
 
@@ -63,13 +70,9 @@ void putPixels(uint8_t c, int32_t len) {
   while(len--) {
     b = 128;
     for(int i=0; i<8; i++) {
-      if(c & b) {
-        display.setColor(WHITE);  
-      } else {
-        display.setColor(BLACK); 
-      }
+      uint16_t color = (c & b) ? SSD1306_WHITE : SSD1306_BLACK;
       b >>= 1;
-      display.setPixel(curr_x, curr_y);
+      display.drawPixel(curr_x, curr_y, color);
       curr_x++;
       if(curr_x >= 128) {
         curr_x = 0;
@@ -77,7 +80,7 @@ void putPixels(uint8_t c, int32_t len) {
         if(curr_y >= 64) {
           curr_y = 0;
           display.display();
-          //display.clear();
+          //display.clearDisplay();
           // 30 fps target rate
           if(digitalRead(0)) while((millis() - lastRefresh) < 33) ;
           lastRefresh = millis();
@@ -111,13 +114,13 @@ void decodeRLE(uint8_t c) {
         }
       } else {
         runlength = runlength | (c << 7);
-          if(c_to_dup == 0x55) {
-            putPixels(0, runlength);
-          } else {
-            putPixels(255, runlength);
-          }
-          c_to_dup = -1;  
-          runlength = -1;        
+        if(c_to_dup == 0x55) {
+          putPixels(0, runlength);
+        } else {
+          putPixels(255, runlength);
+        }
+        c_to_dup = -1;
+        runlength = -1;
       }
     }
 }
@@ -127,17 +130,20 @@ void decodeRLE(uint8_t c) {
 void readFile(fs::FS &fs, const char * path){
     static uint8_t rle_buf[RLEBUFSIZE];
     size_t rle_bufhead = 0;
-    size_t rle_size = 0; 
-  
+    size_t rle_size = 0;
+
     size_t filelen = 0;
     size_t filesize;
     static uint8_t compbuf[READBUFSIZE];
-    
+
     Serial.printf("Reading file: %s\n", path);
     File file = fs.open(path);
     if(!file || file.isDirectory()){
         Serial.println("Failed to open file for reading");
-        display.drawStringMaxWidth(0, 10, 128, "File open error. Upload video.hs using ESP32 Sketch Upload."); display.display();
+        display.clearDisplay();
+        display.setCursor(0, 10);
+        display.print("File open error.");
+        display.display();
         return;
     }
     filelen = file.size();
@@ -145,13 +151,13 @@ void readFile(fs::FS &fs, const char * path){
     Serial.printf("File size: %d\n", filelen);
 
     // init display, putPixels and decodeRLE
-    display.clear();
+    display.clearDisplay();
     display.display();
     curr_x = 0;
     curr_y = 0;
     runlength = -1;
-    c_to_dup = -1;   
-    lastRefresh = millis(); 
+    c_to_dup = -1;
+    lastRefresh = millis();
 
     // init decoder
     heatshrink_decoder_reset(&hsd);
@@ -160,7 +166,6 @@ void readFile(fs::FS &fs, const char * path){
     size_t toRead;
     size_t toSink = 0;
     uint32_t sinkHead = 0;
-    
 
     // Go through file...
     while(filelen) {
@@ -177,14 +182,14 @@ void readFile(fs::FS &fs, const char * path){
       HSD_sink_res sres;
       sres = heatshrink_decoder_sink(&hsd, &compbuf[sinkHead], toSink, &count);
       //Serial.print("^^ sinked ");
-      //Serial.println(count);      
+      //Serial.println(count);
       toSink -= count;
-      sinkHead = count;        
+      sinkHead = count;
       sunk += count;
       if (sunk == filesize) {
         heatshrink_decoder_finish(&hsd);
       }
-        
+
       HSD_poll_res pres;
       do {
           rle_size = 0;
@@ -212,38 +217,44 @@ void readFile(fs::FS &fs, const char * path){
     Serial.println("Done.");
 }
 
-
-
 void setup(){
     Serial.begin(115200);
-    // Reset for some displays
-    pinMode(16,OUTPUT); digitalWrite(16, LOW); delay(50); digitalWrite(16, HIGH);
-    display.init();
-    display.flipScreenVertically ();
-    display.clear();
-    display.setTextAlignment (TEXT_ALIGN_LEFT);
-    display.setFont(ArialMT_Plain_10);
-    display.setColor(WHITE);
-    display.drawString(0, 0, "Mounting SPIFFS...     ");
-    display.display();        
-    if(!SPIFFS.begin()){
-        Serial.println("SPIFFS mount failed");
-        display.drawStringMaxWidth(0, 10, 128, "SPIFFS mount failed. Upload video.hs using ESP32 Sketch Upload."); display.display();
+    Wire.begin(21, 22);  // SDA, SCL
+    if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+        Serial.println(F("SSD1306 allocation failed"));
+        for(;;);
+    }
+
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, 0);
+    display.println("Mounting LittleFS...");
+    display.display();
+
+    if(!LittleFS.begin()){
+        Serial.println("LittleFS mount failed");
+        display.clearDisplay();
+        display.setCursor(0, 0);
+        display.println("LittleFS mount failed.");
+        display.println("Upload video.hs.");
+        display.display();
         return;
     }
 
     pinMode(0, INPUT_PULLUP);
     Serial.print("totalBytes(): ");
-    Serial.println(SPIFFS.totalBytes());
+    Serial.println(LittleFS.totalBytes());
     Serial.print("usedBytes(): ");
-    Serial.println(SPIFFS.usedBytes());
-    listDir(SPIFFS, "/", 0);
-    readFile(SPIFFS, "/video.hs");
+    Serial.println(LittleFS.usedBytes());
+    listDir(LittleFS, "/", 0);
+    readFile(LittleFS, "/video.hs");
+    Serial.println("Done.");
 
-    //Serial.print("Format SPIFSS? (enter y for yes): ");
+    //Serial.print("Format LittleFS? (enter y for yes): ");
     // while(!Serial.available()) ;
     //if(Serial.read() == 'y') {
-    //  bool ret = SPIFFS.format();
+    //  bool ret = LittleFS.format();
     //  if(ret) Serial.println("Success. "); else Serial.println("FAILED! ");
     //} else {
     //  Serial.println("Aborted.");
