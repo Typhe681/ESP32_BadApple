@@ -13,7 +13,7 @@ Runs on any ESP32 board with a 128x64 SSD1306 I2C OLED display. Default wiring i
 * Arduino IDE (1.8.x or 2.x)
 * ESP32 Arduino core from https://github.com/espressif/arduino-esp32
 * Adafruit SSD1306 and Adafruit GFX libraries (install via the Arduino Library Manager)
-* Heatshrink for Arduino from https://github.com/p-v-o-s/Arduino-HScompression
+* Heatshrink for Arduino from https://github.com/p-v-o-s/Arduino-HScompression (bundled in this repo)
 * A LittleFS upload tool, for example https://github.com/earlephilhower/arduino-littlefs-upload (Arduino IDE 2.x) or `pio run -t uploadfs` on PlatformIO
 
 # Usage
